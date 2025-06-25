@@ -105,14 +105,19 @@ install_sing_box() {
         exit 1
     }
 
-    # 生成随机端口和密码
+    # 生成固定端口和密码
     check_ss_command
-    is_port_available
-    hport=$(generate_unused_port)
-    vport=$(generate_unused_port)
-    sport=$(generate_unused_port)
-    ssport=$(generate_unused_port)
+    # hysteria2 固定端口
+    hport=42096
+    # vless 固定端口
+    vport=32096
+    # shadow-tls 固定端口
+    sport=22096
+    # shadowsocks-2022 固定端口
+    ssport=12096
+    # 生成 shadowsocks 密码
     ss_password=$(sing-box generate rand 16 --base64)
+    # 生成 hysteria2/vless/shadowtls 共用密码
     password=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 12)
 
     # 生成 UUID 和 Reality 密钥对
@@ -132,15 +137,12 @@ install_sing_box() {
         exit 1
     }
 
-    # 获取本机 IP 地址和所在国家
-    host_ip=$(curl -s http://checkip.amazonaws.com)
-    ip_country=$(curl -s http://ipinfo.io/${host_ip}/country)
+    # 获取本机 IPv6 地址和所在国家
+    host_ip=$(curl -6 -s https://ifconfig.co)
+    ip_country=$(curl -6 -s https://ipinfo.io/${host_ip}/country)
 
-    # 下载并执行脚本，将输出导入当前shell环境
+    # 下载并执行脚本，将输出导入当前 shell 环境（WireGuard 部分）
     eval "$(curl -fsSL https://raw.githubusercontent.com/passeway/sing-box/main/wireguard.sh)"
-    
-    # 提取变量
-    WARP_IPV4=$(echo "$WARP_IPV4")
     WARP_IPV6=$(echo "$WARP_IPV6")
     WARP_private=$(echo "$WARP_private")
     WARP_Reserved=$(echo "$WARP_Reserved")
@@ -156,12 +158,12 @@ install_sing_box() {
   "dns": {
     "servers": [
       {
-        "address": "https://1.1.1.1/dns-query",
-        "strategy": "prefer_ipv4"
+        "address": "https://[2606:4700:4700::1111]/dns-query",
+        "strategy": "prefer_ipv6"
       },
       {
-        "address": "https://8.8.8.8/dns-query",
-        "strategy": "prefer_ipv4"
+        "address": "https://[2600:4860:4860::8888]/dns-query",
+        "strategy": "prefer_ipv6"
       }
     ]
   },
@@ -179,9 +181,7 @@ install_sing_box() {
       "masquerade": "https://bing.com",
       "tls": {
         "enabled": true,
-        "alpn": [
-          "h3"
-        ],
+        "alpn": ["h3"],
         "certificate_path": "${CONFIG_DIR}/cert.pem",
         "key_path": "${CONFIG_DIR}/private.key"
       }
@@ -207,9 +207,7 @@ install_sing_box() {
             "server_port": 443
           },
           "private_key": "${private_key}",
-          "short_id": [
-            "123abc"
-          ]
+          "short_id": ["123abc"]
         }
       }
     },
@@ -237,9 +235,7 @@ install_sing_box() {
       "listen_port": ${ssport},
       "method": "2022-blake3-aes-128-gcm",
       "password": "${ss_password}",
-      "multiplex": {
-        "enabled": true
-      }
+      "multiplex": {"enabled": true}
     }
   ],
   "outbounds": [
@@ -250,12 +246,9 @@ install_sing_box() {
     {
       "type": "wireguard",
       "tag": "wireguard-out",
-      "server": "${WARP_IPV4}",
+      "server": "${WARP_IPV6}",
       "server_port": 2408,
-      "local_address": [
-        "172.16.0.2/32",
-        "${WARP_IPV6}/128"
-      ],
+      "local_address": ["${WARP_IPV6}/128"],
       "private_key": "${WARP_private}",
       "peer_public_key": "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
       "reserved": [${WARP_Reserved}],
@@ -296,11 +289,11 @@ install_sing_box() {
     "rules": [
       {
         "outbound": "wireguard-out",
-        "rule_set": ["geosite-disney", "geosite-openai", "geosite-netflix"]
+        "rule_set": ["geosite-disney","geosite-openai","geosite-netflix"]
       },
       {
         "outbound": "direct",
-        "network": ["udp", "tcp"]
+        "network": ["udp","tcp"]
       }
     ]
   }
@@ -312,7 +305,6 @@ EOF
         echo -e "${RED}无法启用 ${SERVICE_NAME} 服务！${RESET}"
         exit 1
     }
-
     systemctl start "${SERVICE_NAME}" || {
         echo -e "${RED}无法启动 ${SERVICE_NAME} 服务！${RESET}"
         exit 1
@@ -330,7 +322,7 @@ EOF
         cat << EOF
   - name: ${ip_country}
     type: hysteria2
-    server: ${host_ip}
+    server: [${host_ip}]
     port: ${hport}
     password: ${password}
     alpn:
@@ -341,7 +333,7 @@ EOF
 
   - name: ${ip_country}
     type: vless
-    server: ${host_ip}
+    server: [${host_ip}]
     port: ${vport}
     uuid: ${uuid}
     network: tcp
@@ -356,7 +348,7 @@ EOF
 
   - name: ${ip_country}
     type: ss
-    server: ${host_ip}
+    server: [${host_ip}]
     port: ${sport}
     cipher: 2022-blake3-aes-128-gcm
     password: ${ss_password}
@@ -371,15 +363,14 @@ EOF
     smux:
       enabled: true
 EOF
-
         echo
-        echo "hy2://${password}@${host_ip}:${hport}?insecure=1&sni=www.bing.com#${ip_country}"
+        echo "hy2://${password}@[${host_ip}]:${hport}?insecure=1&sni=www.bing.com#${ip_country}"
         echo
-        echo "${ip_country} = hysteria2, ${host_ip}, ${hport}, password = ${password}, skip-cert-verify=true, sni=www.bing.com"
+        echo "${ip_country} = hysteria2, [${host_ip}], ${hport}, password = ${password}, skip-cert-verify=true, sni=www.bing.com"
         echo
-        echo "${ip_country} = ss, ${host_ip}, ${sport}, encrypt-method=2022-blake3-aes-128-gcm, password=${ss_password}, shadow-tls-password=${password}, shadow-tls-sni=www.bing.com, shadow-tls-version=3, udp-relay=true"
+        echo "${ip_country} = ss, [${host_ip}], ${sport}, encrypt-method=2022-blake3-aes-128-gcm, password=${ss_password}, shadow-tls-password=${password}, shadow-tls-sni=www.bing.com, shadow-tls-version=3, udp-relay=true"
         echo 
-        echo "vless://${uuid}@${host_ip}:${vport}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.tesla.com&fp=chrome&pbk=${public_key}&sid=123abc&type=tcp&headerType=none#${ip_country}"
+        echo "vless://${uuid}@[${host_ip}]:${vport}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.tesla.com&fp=chrome&pbk=${public_key}&sid=123abc&type=tcp&headerType=none#${ip_country}"
         echo
     } > "${CLIENT_CONFIG_FILE}"
 
